@@ -1,0 +1,51 @@
+{
+    "appKeys": {
+        "LATITUDE": 1,
+        "LONGITUDE": 2
+    },
+    "capabilities": [
+        "location",
+        "configurable"
+    ],
+    "companyName": "Trent",
+    "longName": "Tide",
+    "projectType": "native",
+    "resources": {
+        "media": [
+            {
+                "file": "data/Hawaii2016.txt",
+                "name": "Hawaii2016",
+                "targetPlatforms": null,
+                "type": "raw"
+            },
+            {
+                "file": "data/SantaMonica2016.txt",
+                "name": "SantaMonica2016",
+                "targetPlatforms": null,
+                "type": "raw"
+            },
+            {
+                "file": "data/SanClemente2016.txt",
+                "name": "SanClemente2016",
+                "targetPlatforms": null,
+                "type": "raw"
+            },
+            {
+                "file": "data/SanDiego2015.txt",
+                "name": "SanDiego2016",
+                "targetPlatforms": null,
+                "type": "raw"
+            }
+        ]
+    },
+    "sdkVersion": "3",
+    "shortName": "Tide",
+    "targetPlatforms": [
+        "basalt"
+    ],
+    "uuid": "7bbf0738-97b3-4de2-90f2-2842d455706e",
+    "versionLabel": "1.0",
+    "watchapp": {
+        "watchface": true
+    }
+}
