@@ -1,39 +1,24 @@
 {
     "appKeys": {
-        "LATITUDE": 1,
-        "LONGITUDE": 2
+        "backgroundColor": 0,
+        "selectLocation": 1
     },
     "capabilities": [
         "location",
         "configurable"
     ],
     "companyName": "Trent",
+    "enableMultiJS": false,
     "longName": "Tide",
     "projectType": "native",
     "resources": {
         "media": [
             {
-                "file": "data/Hawaii2016.txt",
-                "name": "Hawaii2016",
-                "targetPlatforms": null,
-                "type": "raw"
-            },
-            {
-                "file": "data/SantaMonica2016.txt",
-                "name": "SantaMonica2016",
-                "targetPlatforms": null,
-                "type": "raw"
-            },
-            {
-                "file": "data/SanClemente2016.txt",
-                "name": "SanClemente2016",
-                "targetPlatforms": null,
-                "type": "raw"
-            },
-            {
-                "file": "data/SanDiego2015.txt",
+                "file": "data/SanDiego2016.txt",
                 "name": "SanDiego2016",
-                "targetPlatforms": null,
+                "targetPlatforms": [
+                    "basalt"
+                ],
                 "type": "raw"
             }
         ]

@@ -1,36 +1,36 @@
-/* Current Limitations(Bugs)
- * -The GUI is only designed for tide swings from 7ft to -2ft
- * -Only supports San Diego
- * -Only support 6 tide extrema per day (Because of drawing the graph to scale)
- * -The first and second line displaying the tide levels are not based on real data.
- *  It is only dependant on whether or not the tide extrema of the first or last point is 
- *  a min or max. Ideally we would get this data from the previous or next day but these are times
- *  when it is dark so I don't realy care.
- */
 #include <pebble.h>
 
-#define LATITUDE 1
-#define LONGITUDE 2
-#define NUMBER_OF_LOCATIONS 4
+#define KEY_BACKGROUND_COLOR 0
+#define MAX_NUMBER_TIDE_SWINGS 24
+
+static void update_time();
+static void load_resource();
+static void inbox_received_handler(DictionaryIterator *iter, void *context);
+static void clear();
+static void getCurrentDate();
+static int compareDates(char m1,char m2,char d1,char d2);
+static void getSubString(int startingIndex);
 
 //Constants
 static const int WIDTH_OF_GUI = 140;
 static const int HEIGHT_OF_GUI = 135;
-static const int ZERO_LINE_GUI = 89;//to account for offset of line thickness
-static const int MAX_NUMBER_TIDE_SWINGS = 6;
-static const float PX_PER_FOOT = 12;
+static const int ZERO_LINE_GUI = 106;
+static const int PX_PER_FOOT = 12;
 static const float PX_THICKNESS_OF_RED_LINE = 4;
-static const float PX_PER_HOUR = 5.7;
+static const float PX_PER_HOUR = 6;
 static const int PX_OF_TIME_LINE = 1;
+static const int TIME_STARTING_OFFSET = 6;
+static const int MAX_FEET = 8;
 static const bool DEBUG = true;
 
 //Graphics
 static Window *window;
-static int numberOfTideSwings;
 static Layer *graphic_layer;
 static TextLayer *clock_time;
-static GPath *s_my_path_ptr[7] = {NULL,NULL,NULL,NULL,NULL,NULL,NULL};//for filling in tide line
-static GPoint extremaPoint[6+2];//to account for start and end
+static GPath *tide_path = NULL;//for filling in tide line
+static GColor tideBackgroundColor;
+static GPoint extremaPoints[MAX_NUMBER_TIDE_SWINGS];
+
 
 //Data
 static char* s_buffer;//from resource
@@ -38,18 +38,53 @@ static char dateBuffer[80];
 static char year[4] = {'2','0','1','6'};
 static char day[2] = {'0','1'};
 static char month[2] = {'0','1'};
-static char tideText[300];
-static char tideTextDivided[6][50];
-static int tideExtrema[6] = {-1,-1,-1,-1,-1,-1};//for graph
-static int timeofTideExtremaInPx[6] = {-1,-1,-1,-1,-1,-1};//for graph
+static char tideText[2000];
+static char tideTextLength;
+static char tideTextDivided[MAX_NUMBER_TIDE_SWINGS][31];
+static float tideExtrema [MAX_NUMBER_TIDE_SWINGS] = {-10,-10,-10,-10,-10,-10,-10,-10,-10,-10,
+                                 -10,-10,-10,-10,-10,-10,-10,-10,-10,-10,
+                                 -10,-10,-10,-10};
+static float timeExtrema [MAX_NUMBER_TIDE_SWINGS] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+                                 -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+                                 -1,-1,-1,-1};
+
+
 int locationName = 0;
 
-//check if a character is a digit or '-'
-static bool isDigit(char ch){
-  if((ch>='0' && ch<='9') || ch == '-'){
-    return 1;
-  }else{
-    return 0;
+//taken from http://stackoverflow.com/questions/8257714/how-to-convert-an-int-to-string-in-c
+char *itoa (int value, char *result, int base){
+    // check that the base if valid
+    if (base < 2 || base > 36) { *result = '\0'; return result; }
+
+    char* ptr = result, *ptr1 = result, tmp_char;
+    int tmp_value;
+
+    do {
+        tmp_value = value;
+        value /= base;
+        *ptr++ = "zyxwvutsrqponmlkjihgfedcba9876543210123456789abcdefghijklmnopqrstuvwxyz" [35 + (tmp_value - value * base)];
+    } while ( value );
+
+    // Apply negative sign
+    if (tmp_value < 0) *ptr++ = '-';
+    *ptr-- = '\0';
+    while (ptr1 < ptr) {
+        tmp_char = *ptr;
+        *ptr--= *ptr1;
+        *ptr1++ = tmp_char;
+    }
+    return result;
+}
+
+//This receives the message passed by the javascript portion
+static void inbox_received_handler(DictionaryIterator *iter, void *context) {
+  // High contrast selected?
+  Tuple *background_color = dict_find(iter, KEY_BACKGROUND_COLOR);
+  
+  if(background_color) {  // Read boolean as an integer
+    persist_write_int(KEY_BACKGROUND_COLOR,background_color->value->int32);
+    tideBackgroundColor = GColorFromHEX(background_color->value->int32);
+    update_time();
   }
 }
 
@@ -57,15 +92,35 @@ static void load_resource() {
   if(DEBUG){
     APP_LOG(APP_LOG_LEVEL_DEBUG,"Loading Resources");
   }
-
+  int startOffset, endOffset;
+  
+  getCurrentDate();
   // Get resource and size
-  ResHandle handle = resource_get_handle(RESOURCE_ID_SanDiego2016);  
-
+  ResHandle handle = resource_get_handle(RESOURCE_ID_SanDiego2016);    
   size_t res_size = resource_size(handle);
-
+  
+  //only load resources for a few months not all months
+  int currentMonth = 10*(month[0]-'0')+1*(month[1]-'0');
+  
+  if(currentMonth == 1)
+    startOffset = 0;
+  else
+    startOffset = res_size*(currentMonth-1)/12;
+  
+  if(currentMonth == 12)
+    endOffset = res_size;
+  else
+    endOffset = res_size*(currentMonth+1)/12;
+  
+  APP_LOG(APP_LOG_LEVEL_DEBUG,"res_size = %d startOffset = %d endOffset = %d month = %d",res_size,startOffset,endOffset,currentMonth);
+  
   // Copy to buffer
-  s_buffer = (char*)malloc(res_size);
-  resource_load(handle, (uint8_t*)s_buffer, res_size);
+  s_buffer = (char*)malloc(endOffset-startOffset);
+  resource_load_byte_range(handle,startOffset,(uint8_t*)s_buffer,endOffset-startOffset);
+  //resource_load(handle, (uint8_t*)s_buffer, res_size);
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"Loading Resources Done");
+  }
 }
 
 static void clear(){
@@ -74,18 +129,15 @@ static void clear(){
   }
   
   for(int i = 0; i < MAX_NUMBER_TIDE_SWINGS; i++){
-    tideExtrema[i] = -1;
-    timeofTideExtremaInPx[i] = -1;
+    tideExtrema[i] = -10;
+    timeExtrema[i] = -1;
   }  
   //free memory allcated for paths
-    for(int i = 0; i < numberOfTideSwings + 1; i++){
-      if(s_my_path_ptr[i] != NULL){
-        gpath_destroy(s_my_path_ptr[i]);
-        APP_LOG(APP_LOG_LEVEL_DEBUG,"Gpath_destroy: %d",i);
-        s_my_path_ptr[i] = NULL;
-      }
-    }
-  numberOfTideSwings = 0;
+  if(tide_path != NULL){
+      gpath_destroy(tide_path);
+      APP_LOG(APP_LOG_LEVEL_DEBUG,"Gpath_destroyed");
+      tide_path = NULL;   
+  }
 }
 
 //get the date from the system
@@ -107,103 +159,6 @@ static void getCurrentDate(){
   day[1] = dateBuffer[9];
 }
 
-//Feb = 28
-//Sep,April,June,Noveber = 30
-//jan,march,may,july,august,october,december = 31
-//doesnt take into account leap years
-static void getNextDate(){
-  //the day is between 1 and 8
-  if(day[0] == '0' && day[1] != '9'){
-    day[1] += 1;
-  //the day is 9
-  }else if(day[0] == '0' && day[1] == '9' ){
-    day[0] = '1';
-    day[1] = '0';
-  //the day is between 10 and 18
-  }else if(day[0] == '1' && day[1] != '9'){
-    day[1]+=1;
-  //the day is 19
-  }else if(day[0] == '1' && day[1] == '9'){
-    day[0] = '2';
-    day[1] = '0';
-  //the day is between 20 and 27
-  }else if(day[0] == '2' && (day[1] != '8' && day[1] != '9')){
-    day[1]+=1;  
-  //the day is 28
-  }else if(day[0] == '2' && day[1] == '8'){
-    //february
-    if(month[0] == '0' && month[1] == '2'){
-      month[1] = '3';
-      day[0] = '0';
-      day[1] = '1';
-    }else{
-      day[0] = '2';
-      day[1] = '9';
-    }
-  //the day is 29
-  }else if(day[0] == '2' && day[1] == '9'){
-    day[0] = '3';
-    day[1] = '0';
-  //the day is 30
-  }else if(day[0] == '3' && day[1] == '0'){
-    //april
-    if(month[0] == '0' && month[1] == '4'){
-      month[0] = '0';
-      month[1] = '5';
-      day[0] = '0';
-      day[1] = '1';
-    //june
-    }else if(month[0] == '0' && month[1] == '6'){
-      month[0] = '0';
-      month[1] = '7';
-      day[0] = '0';
-      day[1] = '1';
-    //Nov
-    }else if(month[0] == '1' && month[1] == '1'){
-      month[0] = '1';
-      month[1] = '2';
-      day[0] = '0';
-      day[1] = '1';
-    //Sep
-    }else if(month[0] == '0' && month[1] == '9'){
-      month[0] = '1';
-      month[1] = '0';
-      day[0] = '0';
-      day[1] = '1';
-    }else{
-      day[0] = '3';
-      day[1] = '1';   
-    }
-  //day is 31
-  }else if(day[0] == '3' && day[1] == '1'){
-    if(month[0] == '0' && month[1] != '9'){
-      month[0] = '0';
-      month[1] += 1;
-      day[0] = '0';
-      day[1] = '1';
-    }else if(month[0] == '0' && month[1] == '9'){
-      month[0] = '1';
-      month[1] = '0';
-      day[0] = '0';
-      day[1] = '1';
-    }else if(month[0] == '1' && month[1] == '0'){
-      month[0] = '1';
-      month[1] = '1';
-      day[0] = '0';
-      day[1] = '1';
-    }else if(month[0] == '1' && month[1] == '1'){
-      month[0] = '1';
-      month[1] = '2';
-      day[0] = '0';
-      day[1] = '1';
-    }else if(month[0] == '1' && month[1] == '2'){
-      month[0] = '0';
-      month[1] = '1';
-      day[0] = '0';
-      day[1] = '1';
-    }
-  }    
-}
 //2015-12-14
 //if current date < date2 return 1
 //else current date > date2 return 2
@@ -240,9 +195,9 @@ static void getSubString(int startingIndex){
   int newStartingPoint = 0;
   int newEndingPoint = 0;
   int current = startingIndex;
-
-  for(int i = 0; i < 300; i++)
-    tideText[i] = '\0';
+  
+  //for(int i = 0; i < 2000; i++)
+   // tideText[i] = '\0';
   
   //find where the date begins
   //keep searching up until you found a date < the current date
@@ -277,14 +232,16 @@ static void getSubString(int startingIndex){
       }
     }
   }
+  
 
   /*partial copy*/
   strncpy (tideText,&s_buffer[newStartingPoint+1],newEndingPoint-newStartingPoint);
   tideText[newEndingPoint-newStartingPoint] = '\0';   /* null character manually added */
-}
+  tideTextLength = newEndingPoint-newStartingPoint;
+ }
 
 //this is performing a binary search for the date
-//this will return the in the s_buffer
+//this will return the s_buffer index
 //that the string was found
 static int search(){
   unsigned int high = strlen(s_buffer);
@@ -328,135 +285,60 @@ static void divideUpSubString(){
   if(DEBUG){
     APP_LOG(APP_LOG_LEVEL_DEBUG,"Dividing Substring");
   }
-
-  int i = 0;
-  int j = 0;
-  int k = 0;
-  while(tideText[i]!='\0'){
-    //a date is found
-    if(tideText[i] == '/'){
-      //copy important information
-      for(k = 0; k < 22; k++){
-        tideTextDivided[j][k+1] = '\0';
-        tideTextDivided[j][k] = tideText[i+10+k];
-        
-        if(tideText[i+10+k] == 'H' || tideText[i+10+k] == 'L'){//stop copying when you hit the end
-          numberOfTideSwings++;
-          //get rid of cm
-          if(isDigit(tideTextDivided[j][k-2])){
-            tideTextDivided[j][k-2] = ' ';
-            if(isDigit(tideTextDivided[j][k-3])){
-              tideTextDivided[j][k-3] = ' ';
-              if(isDigit(tideTextDivided[j][k-4])){
-                tideTextDivided[j][k-4] = ' ';
-                if(isDigit(tideTextDivided[j][k-5])){
-                  tideTextDivided[j][k-5] = ' ';
-                }
-              }
-            }
-          }
+  int z = 0;
+  for(int i = 0; i < MAX_NUMBER_TIDE_SWINGS; i++){
+      for(int k = 0; k < 32; k++){
+        tideTextDivided[i][k] = tideText[z];
+        z++;
+        if(tideTextDivided[i][k] == '\n'){
+          tideTextDivided[i][k+1] = '\0';
           break;
         }
       }
-      i+=21;//skip all the information we copied
-      j++;//fill in the next date
-    }
-    i++;
+  }
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"Done Dividing Substring");
   }
 }
 
-static void getMinAndMaxTidesAtTimes(){
+static void getExtremaFromText(){
   if(DEBUG){
     APP_LOG(APP_LOG_LEVEL_DEBUG,"Getting Min and Max");
   }
-
-  int i = 0;
-  while(i < numberOfTideSwings){
-    //get time in px
-    timeofTideExtremaInPx[i] = 1000*(tideTextDivided[i][1]-'0')+100*(tideTextDivided[i][2]-'0')+10*(tideTextDivided[i][4]-'0')+1*(tideTextDivided[i][5]-'0');
-    
-    //convert to military
-    //take care of corner cases
-    if(tideTextDivided[i][7] == 'P')
-      timeofTideExtremaInPx[i]+=1200;
-    if((tideTextDivided[i][7] == 'P' && tideTextDivided[i][1] == '1' && tideTextDivided[i][2] == '2' ) || (tideTextDivided[i][7] == 'A' && tideTextDivided[i][1] == '1' && tideTextDivided[i][2] == '2'))
-      timeofTideExtremaInPx[i]-=1200;
-    //convert to px
-    timeofTideExtremaInPx[i]/=100;//move two decimal places
-    timeofTideExtremaInPx[i]*=PX_PER_HOUR;//each hour times by 5
-    timeofTideExtremaInPx[i]+=5;//to account for shift of line in graphics
-    
-    //tideExtrema
-    //take care of negative case
-    if(tideTextDivided[i][10] == '-'){
-      tideExtrema[i]=0;
-      tideExtrema[i]=70-10*(tideTextDivided[i][11]-'0') + 1*(tideTextDivided[i][13]-'0');
-    }else{
-      tideExtrema[i]=0;
-      tideExtrema[i]=70-10*(tideTextDivided[i][10]-'0') + 1*(tideTextDivided[i][12]-'0');
-    }
-    
-    tideExtrema[i]*=PX_PER_FOOT;
-    tideExtrema[i]/=10;
-    i++;
-  }
-}
-
-static void drawPoints(GContext *ctx){
   
-    if(DEBUG){
-      APP_LOG(APP_LOG_LEVEL_DEBUG,"Drawing Points");
-    }
-
-
-    float endingSlope = 0;//to determine if last tide is going down or up
-
-    graphics_context_set_stroke_color(ctx,GColorVividCerulean);
-    graphics_context_set_stroke_width(ctx, 2);
+  int i = 0;
+  while(i < MAX_NUMBER_TIDE_SWINGS){
+    //get time in px
+    timeExtrema[i] = 1000*(tideTextDivided[i][15]-'0')+100*(tideTextDivided[i][16]-'0')+10*(tideTextDivided[i][18]-'0')+1*(tideTextDivided[i][19]-'0');
     
-    for(int i = 0; i < MAX_NUMBER_TIDE_SWINGS-1; i++){
-      if(tideExtrema[i+1] != -1){
-        extremaPoint[i+1] = GPoint(timeofTideExtremaInPx[i],tideExtrema[i]);
-        extremaPoint[i+2] = GPoint(timeofTideExtremaInPx[i+1],tideExtrema[i+1]);
-        graphics_draw_line(ctx, extremaPoint[i+1], extremaPoint[i+2]);//vertical line
-        //100 is an arbitrary constant to get a better spread
-        endingSlope = 100*(extremaPoint[i+2].y - extremaPoint[i+1].y)/(extremaPoint[i+2].x-extremaPoint[i+1].x);
-      }  
+    if(DEBUG){
+      APP_LOG(APP_LOG_LEVEL_DEBUG," 15:%c 16:%c 17:%c 18:%c 19:%c 20:%c 21:%c 22:%c 23:%c 24:%c 25:%c 26:%c 27:%c",tideTextDivided[i][15],tideTextDivided[i][16],tideTextDivided[i][17],
+            tideTextDivided[i][18],tideTextDivided[i][19],tideTextDivided[i][20],tideTextDivided[i][21],tideTextDivided[i][22],tideTextDivided[i][23],
+           tideTextDivided[i][24],tideTextDivided[i][25],tideTextDivided[i][26],tideTextDivided[i][27]);
     }
-
-    //get starting line
-    if(tideExtrema[0]>tideExtrema[1]){
-      extremaPoint[0] = GPoint(0,tideExtrema[0]-35);
+    //convert time to military
+    //take care of corner cases
+    if(tideTextDivided[i][21] == 'P')
+      timeExtrema[i]+=1200;
+    if((tideTextDivided[i][21] == 'P' && tideTextDivided[i][15] == '1' && tideTextDivided[i][16] == '2' ) || (tideTextDivided[i][21] == 'A' && tideTextDivided[i][15] == '1' && tideTextDivided[i][16] == '2'))
+      timeExtrema[i]-=1200;
+    
+    timeExtrema[i] /= 100;
+    
+    //get tide
+    //take care of negative case
+    if(tideTextDivided[i][24] == '-'){
+      tideExtrema[i]=10*(tideTextDivided[i][25]-'0') + 1*(tideTextDivided[i][27]-'0');
     }else{
-      extremaPoint[0] = GPoint(0,tideExtrema[0]+35);
+      tideExtrema[i]=10*(tideTextDivided[i][24]-'0') + 1*(tideTextDivided[i][26]-'0');
     }
-    graphics_draw_line(ctx,extremaPoint[0], extremaPoint[1]);//vertical line
-
-    //get end line
-    if(endingSlope <= 0){
-      extremaPoint[numberOfTideSwings+1] = GPoint(WIDTH_OF_GUI+10,tideExtrema[numberOfTideSwings-1]+35);
-    }else{
-      extremaPoint[numberOfTideSwings+1] = GPoint(WIDTH_OF_GUI+10,tideExtrema[numberOfTideSwings-1]-35);
-    }
-    graphics_draw_line(ctx,extremaPoint[numberOfTideSwings],extremaPoint[numberOfTideSwings+1]);//vertical line
-        
-    //fill in lines w/ polygons
-    //TODO error here
-    GPathInfo polygon [7] ={ {.num_points = 4,.points = (GPoint []) {extremaPoint[0],{extremaPoint[1].x+1,extremaPoint[1].y+1},{extremaPoint[1].x+1,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1},{extremaPoint[0].x,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1}}},
-                             {.num_points = 4,.points = (GPoint []) {extremaPoint[1],{extremaPoint[2].x+1,extremaPoint[2].y+1},{extremaPoint[2].x+1,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1},{extremaPoint[1].x,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1}}},
-                             {.num_points = 4,.points = (GPoint []) {extremaPoint[2],{extremaPoint[3].x+1,extremaPoint[3].y+1},{extremaPoint[3].x+1,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1},{extremaPoint[2].x,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1}}},
-                             {.num_points = 4,.points = (GPoint []) {extremaPoint[3],{extremaPoint[4].x+1,extremaPoint[4].y+1},{extremaPoint[4].x+1,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1},{extremaPoint[3].x,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1}}},
-                             {.num_points = 4,.points = (GPoint []) {extremaPoint[4],{extremaPoint[5].x+1,extremaPoint[5].y+1},{extremaPoint[5].x+1,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1},{extremaPoint[4].x,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1}}},
-                             {.num_points = 4,.points = (GPoint []) {extremaPoint[5],{extremaPoint[6].x+1,extremaPoint[6].y+1},{extremaPoint[6].x+1,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1},{extremaPoint[5].x,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1}}},
-                             {.num_points = 4,.points = (GPoint []) {extremaPoint[6],{extremaPoint[7].x+1,extremaPoint[7].y+1},{extremaPoint[7].x+1,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1},{extremaPoint[6].x,ZERO_LINE_GUI-PX_THICKNESS_OF_RED_LINE+1}}}
-                           };
-
-    graphics_context_set_fill_color(ctx, GColorVividCerulean);
-    for(int i = 0; i < numberOfTideSwings+1 ; i++){
-      
-      s_my_path_ptr[i] = gpath_create(&polygon[i]);
-      gpath_draw_filled(ctx, s_my_path_ptr[i]);
-    }
+    tideExtrema[i] /= 10;
+    
+    i++;   
+  }
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"Done Getting Min and Max");
+  }
 }
 
 static void drawText(GContext *ctx, const char * text,int x,int y,int width, int height){
@@ -473,20 +355,11 @@ static void drawText(GContext *ctx, const char * text,int x,int y,int width, int
   );
 }
 
-//The text for the feet should be right aligned
-static void drawTextFeet(GContext *ctx, const char * text,int x,int y,int width, int height){
-//add numbers to tide graph
-  GRect frame = GRect(x,y,width,height);
-  graphics_context_set_text_color(ctx, GColorBlack);
-  graphics_draw_text(ctx, 
-    text,
-    fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
-    frame,
-    GTextOverflowModeTrailingEllipsis,
-    GTextAlignmentRight,
-    NULL
-  );
+//calculate the ceiling of a/b
+static int ceiling(int a, int b){
+  return (a + b - 1) / b;
 }
+
 
 static void drawCurrentTimeLineAndFeetLine(GContext *ctx){
   
@@ -506,24 +379,23 @@ static void drawCurrentTimeLineAndFeetLine(GContext *ctx){
   //draw line of current time
   graphics_context_set_stroke_color(ctx,GColorBlack);
   graphics_context_set_stroke_width(ctx, PX_OF_TIME_LINE);
-  GPoint p1 = GPoint((int)timeInPX,HEIGHT_OF_GUI-8);
-  GPoint p2 = GPoint((int)timeInPX,5);
-  graphics_draw_line(ctx, p1, p2);//vertical line
-  
+  GPoint verticalBottom = GPoint((int)timeInPX,HEIGHT_OF_GUI-8);
+  GPoint verticalTop = GPoint((int)timeInPX,5);
+  graphics_draw_line(ctx, verticalBottom, verticalTop);//vertical line
   
   //Draw line of current tide
-  int x1,x2,x3,x4,y1,y2,y3,y4;
-  x1 = x2 = x3 = x4 = y1 = y2 = y3 = y4 = 0;
-  for(int i = 0; i < MAX_NUMBER_TIDE_SWINGS+2;i++){
-    if(extremaPoint[i].x > p1.x){
-      x1 = extremaPoint[i-1].x;
-      x2 = extremaPoint[i].x;
-      x3 = p1.x;
-      x4 = p2.x;
-      y1 = extremaPoint[i-1].y;
-      y2 = extremaPoint[i].y;
-      y3 = p1.y;
-      y4 = p2.y;
+  int x1,x2,x3,x4,y1,y2,y3,y4,i;
+  x1 = x2 = x3 = x4 = y1 = y2 = y3 = y4 = i =  0;
+  for(; i < MAX_NUMBER_TIDE_SWINGS+2;i++){
+    if(extremaPoints[i].x > verticalBottom.x){
+      x1 = extremaPoints[i-1].x;
+      x2 = extremaPoints[i].x;
+      x3 = verticalBottom.x;
+      x4 = verticalTop.x;
+      y1 = extremaPoints[i-1].y;
+      y2 = extremaPoints[i].y;
+      y3 = verticalBottom.y;
+      y4 = verticalTop.y;
       break;
     }
   }
@@ -531,37 +403,94 @@ static void drawCurrentTimeLineAndFeetLine(GContext *ctx){
                                ((x1*y2-y1*x2)*(y3-y4)-(y1-y2)*(x3*y4-y3*x4))/((x1-x2)*(y3-y4)-(y1-y2)*(x3-x4)));
 
   GPoint p3 = GPoint(5,intersection.y);
-  graphics_draw_line(ctx, p3, intersection);//vertical line
+  graphics_draw_line(ctx, p3, intersection);//horizontal line
+  
+ 
+  //write the current value of the tide next to the vertical time bar
+  char str[10];
+  int stringIndex = 0;
+  if((MAX_FEET-ceiling(intersection.y,PX_PER_FOOT)+'0') < 0){
+      str[stringIndex] = '-';
+      stringIndex++;
+  }
+  str[stringIndex] = (ZERO_LINE_GUI-intersection.y)/PX_PER_FOOT+'0';
+  
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"******************************");
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"PX_PER_FOOT %d",PX_PER_FOOT);
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"intersection.y %d",intersection.y);
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"ZERO_LINE_GUI %d",ZERO_LINE_GUI);
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"currentTide %d",(ZERO_LINE_GUI-intersection.y)/PX_PER_FOOT);
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"******************************");
+  }
+  
+  stringIndex++;
+  str[stringIndex] = '.';
+  stringIndex++;
+  if((ZERO_LINE_GUI-intersection.y)%PX_PER_FOOT > 9)
+    str[stringIndex] = '9';
+  else
+    str[stringIndex] = (ZERO_LINE_GUI-intersection.y)%PX_PER_FOOT+'0';
+  stringIndex++;
+  str[stringIndex] = 'f';
+  stringIndex++;
+  str[stringIndex] = 't';
+  stringIndex++;
+  str[stringIndex] = '\0';
+  
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"str %s %d",str,intersection.y);
+  }
+  
+  //if vertical bar is too far to the right draw tide to the left
+  if(verticalTop.x > WIDTH_OF_GUI-50 || verticalTop.x > 70 ){
+      drawText(ctx,str,verticalTop.x-30,verticalTop.y,30,20);
+  //else draw bar to the right
+  }else{
+      drawText(ctx,str,verticalTop.x+5,verticalTop.y,30,20);
+  }
 }
 
 static void drawOutlineOfGraph(GContext *ctx){
   //draw outline of tide graph
-  //every ft in tide is = 12 px
-  //''    time   ''  '' = 5 px 
-  GPoint p0 = GPoint(5,5);//7ft
+  GPoint p0 = GPoint(5,5);//8ft
   GPoint p1 = GPoint(5,ZERO_LINE_GUI);//0ft
   GPoint p2 = GPoint(140,ZERO_LINE_GUI);//12pm
-  GPoint p3 = GPoint(5,125);//-2ft
+  GPoint p3 = GPoint(5,132);//-2ft
 
   graphics_context_set_stroke_color(ctx, GColorRed);
   graphics_context_set_stroke_width(ctx, 4);
   graphics_draw_line(ctx, p0, p3);//vertical line
   graphics_draw_line(ctx, p1, p2);//horizontal line
+
+  //draw feet  
+  drawText(ctx,"8",18,(MAX_FEET-8)*PX_PER_FOOT,14,PX_PER_FOOT);
+  drawText(ctx,"6",18,(MAX_FEET-6)*PX_PER_FOOT,14,PX_PER_FOOT);
+  drawText(ctx,"4",18,(MAX_FEET-4)*PX_PER_FOOT,14,PX_PER_FOOT);
+  drawText(ctx,"2",18,(MAX_FEET-2)*PX_PER_FOOT,14,PX_PER_FOOT);
+  drawText(ctx,"0",18,(MAX_FEET-0)*PX_PER_FOOT,14,PX_PER_FOOT);
+  drawText(ctx,"2",18,(MAX_FEET+2)*PX_PER_FOOT,14,PX_PER_FOOT);
   
-  //add numbers to tide graph
-  drawTextFeet(ctx,"+7",8,(7-7)*PX_PER_FOOT,14,PX_PER_FOOT);
-  drawTextFeet(ctx,"+6",8,(7-6)*PX_PER_FOOT,14,PX_PER_FOOT);
-  drawTextFeet(ctx,"+5",8,(7-5)*PX_PER_FOOT,14,PX_PER_FOOT);
-  drawTextFeet(ctx,"+4",8,(7-4)*PX_PER_FOOT,14,PX_PER_FOOT);
-  drawTextFeet(ctx,"+3",8,(7-3)*PX_PER_FOOT,14,PX_PER_FOOT);
-  drawTextFeet(ctx,"+2",8,(7-2)*PX_PER_FOOT,14,PX_PER_FOOT);
-  drawTextFeet(ctx,"+1",8,(7-1)*PX_PER_FOOT,14,PX_PER_FOOT);
-  drawTextFeet(ctx,"+0",8,(7-0)*PX_PER_FOOT,14,PX_PER_FOOT);
-  drawTextFeet(ctx,"-1",8,(7+1)*PX_PER_FOOT,14,PX_PER_FOOT);
-  drawTextFeet(ctx,"-2",8,(7+2)*PX_PER_FOOT,14,PX_PER_FOOT);
+  //draw thick tick marks FT
+  graphics_context_set_stroke_color(ctx,GColorBlack);
+  graphics_context_set_stroke_width(ctx, 2);
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET-8)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET-8)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET-6)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET-6)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET-4)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET-4)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET-2)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET-2)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET-0)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET-0)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET+2)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET+2)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+
+  //draw thin tick marks FT
+  graphics_context_set_stroke_width(ctx, 1);
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET-7)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET-7)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET-5)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET-5)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET-3)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET-3)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET-1)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET-1)*PX_PER_FOOT+PX_PER_FOOT/2+3));
+  graphics_draw_line(ctx, GPoint(4,(MAX_FEET+1)*PX_PER_FOOT+PX_PER_FOOT/2+3), GPoint(14,(MAX_FEET+1)*PX_PER_FOOT+PX_PER_FOOT/2+3));
   
-  //add times
-  drawText(ctx,"3",PX_PER_HOUR*3+PX_THICKNESS_OF_RED_LINE+1/*easier on the eyes*/,ZERO_LINE_GUI,10,7);
+  //draw time
+  drawText(ctx,"3",PX_PER_HOUR*3+PX_THICKNESS_OF_RED_LINE,ZERO_LINE_GUI,10,7);
   drawText(ctx,"6",PX_PER_HOUR*6+PX_THICKNESS_OF_RED_LINE,ZERO_LINE_GUI,10,7);
   drawText(ctx,"9",PX_PER_HOUR*9+PX_THICKNESS_OF_RED_LINE,ZERO_LINE_GUI,10,7);
   drawText(ctx,"N",PX_PER_HOUR*12+PX_THICKNESS_OF_RED_LINE,ZERO_LINE_GUI,10,7);
@@ -570,25 +499,53 @@ static void drawOutlineOfGraph(GContext *ctx){
   drawText(ctx,"9",PX_PER_HOUR*21+PX_THICKNESS_OF_RED_LINE,ZERO_LINE_GUI,10,7);
 }
 
-static void graph_update(Layer *layer, GContext *ctx) {  
+static void drawExtremaPoints(GContext *ctx){
+    graphics_context_set_stroke_color(ctx,tideBackgroundColor);
+    graphics_context_set_stroke_width(ctx, 2);
     
-    getMinAndMaxTidesAtTimes();//get extrema
-    drawPoints(ctx);//draw extrema
-    drawCurrentTimeLineAndFeetLine(ctx);//update tide pin point lines
+    //calculate GPoints of extrema
+    for(int i = 0; i < MAX_NUMBER_TIDE_SWINGS; i++){
+      extremaPoints[i] = GPoint(TIME_STARTING_OFFSET+timeExtrema[i]*PX_PER_HOUR,ZERO_LINE_GUI-tideExtrema[i]*PX_PER_FOOT);
+    }
+  
+    //Draw Outline
+    for(int i = 0; i < MAX_NUMBER_TIDE_SWINGS-1; i++){
+      if(timeExtrema[i+1] != -1){  
+        graphics_draw_line(ctx,extremaPoints[i],extremaPoints[i+1]);
+      }
+    }
+}
 
-    //draw outline of the graph if it isn't already drawn
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Drawing Outline");
-  
-    drawText(ctx,"SAN",100,0,80,14);//draw tide location i.e LA
-  
+static void fillInGraph(GContext *ctx){
+    //fill in line w/ polygon
+    GPoint startPoint = GPoint(5,ZERO_LINE_GUI);
+    GPoint endPoint = GPoint(WIDTH_OF_GUI+5,ZERO_LINE_GUI);
+    
+    GPathInfo polygon = {.num_points = MAX_NUMBER_TIDE_SWINGS+2,.points = (GPoint []){startPoint,extremaPoints[0],extremaPoints[1],extremaPoints[2],
+                                                                                     extremaPoints[3],extremaPoints[4],extremaPoints[5],extremaPoints[6],
+                                                                                     extremaPoints[7],extremaPoints[8],extremaPoints[9],extremaPoints[10],
+                                                                                     extremaPoints[11],extremaPoints[12],extremaPoints[13],extremaPoints[14],
+                                                                                     extremaPoints[15],extremaPoints[16],extremaPoints[17],extremaPoints[18],
+                                                                                     extremaPoints[19],extremaPoints[20],extremaPoints[21],extremaPoints[22],
+                                                                                     extremaPoints[23],endPoint}};
+    graphics_context_set_fill_color(ctx, tideBackgroundColor);
+    tide_path = gpath_create(&polygon);
+    gpath_draw_filled(ctx, tide_path);
+}
+
+static void graph_update(Layer *layer, GContext *ctx) {      
+    getExtremaFromText();
+    drawExtremaPoints(ctx);
+    fillInGraph(ctx);
     drawOutlineOfGraph(ctx);
+    drawCurrentTimeLineAndFeetLine(ctx);//update tide pin point lines 
 }
 
 /* Redraw the graph. This is used as an updated method for when the time
  * or date changes
  */
 static void refresh(){
-  if(DEBUG)
+    if(DEBUG)
       APP_LOG(APP_LOG_LEVEL_DEBUG, "Refresh Called");
   
     clear();
@@ -601,7 +558,7 @@ static void refresh(){
 static void window_unload(Window *window) {
   if(DEBUG)
     APP_LOG(APP_LOG_LEVEL_DEBUG, "window unload");
- //We will safely destroy the Window's elements here!
+  //We will safely destroy the Window's elements here!
   text_layer_destroy(clock_time);//destroy clock
   layer_destroy(graphic_layer);//destroy graph
 }
@@ -620,6 +577,13 @@ static void window_load(Window *window){
   text_layer_set_font(clock_time,fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   layer_add_child(window_layer, text_layer_get_layer(clock_time));
   
+  //if a color exists load it
+  if(persist_exists(KEY_BACKGROUND_COLOR)){
+    tideBackgroundColor = GColorFromHEX(persist_read_int(KEY_BACKGROUND_COLOR));
+  }else{
+    tideBackgroundColor = GColorVividCerulean;//initialize color of tide graph
+  }
+
 }
 
 static void update_time() {
@@ -646,7 +610,10 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 static void init(void) {
   if(DEBUG)
     APP_LOG(APP_LOG_LEVEL_DEBUG, "init");
-
+  
+  app_message_register_inbox_received(inbox_received_handler);
+  app_message_open(100,100);
+  
   //update clock every minute
   tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
   
@@ -657,7 +624,7 @@ static void init(void) {
   });
   const bool animated = true;
   window_stack_push(window, animated);
-  
+
   load_resource();
 }
 
