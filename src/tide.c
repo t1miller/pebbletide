@@ -21,7 +21,7 @@ static const float PX_PER_HOUR = 6;
 static const int PX_OF_TIME_LINE = 1;
 static const int TIME_STARTING_OFFSET = 6;
 static const int MAX_FEET = 8;
-static const bool DEBUG = true;
+static const bool DEBUG = false;
 
 //Graphics
 static Window *window;
@@ -90,8 +90,9 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
 static void load_resource() {
   if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Loading Resources");
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"--------------LOADING RESOURCES START----------");
   }
+  
   int startOffset, endOffset;
   
   getCurrentDate();
@@ -102,30 +103,29 @@ static void load_resource() {
   //only load resources for a few months not all months
   int currentMonth = 10*(month[0]-'0')+1*(month[1]-'0');
   
-  if(currentMonth == 1)
+  if(currentMonth == 1 || currentMonth == 2)
     startOffset = 0;
   else
-    startOffset = res_size*(currentMonth-1)/12;
+    startOffset = res_size*(currentMonth-2)/12;
   
   if(currentMonth == 12)
     endOffset = res_size;
   else
-    endOffset = res_size*(currentMonth+1)/12;
+    endOffset = res_size*(currentMonth)/12;
   
-  APP_LOG(APP_LOG_LEVEL_DEBUG,"res_size = %d startOffset = %d endOffset = %d month = %d",res_size,startOffset,endOffset,currentMonth);
+  APP_LOG(APP_LOG_LEVEL_DEBUG,"res_size = %d startOffset = %d endOffset = %d month = %d",(int)res_size,startOffset,endOffset,currentMonth);
   
   // Copy to buffer
   s_buffer = (char*)malloc(endOffset-startOffset);
   resource_load_byte_range(handle,startOffset,(uint8_t*)s_buffer,endOffset-startOffset);
-  //resource_load(handle, (uint8_t*)s_buffer, res_size);
   if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Loading Resources Done");
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"--------------LOADING RESOURCES DONE----------");
   }
 }
 
 static void clear(){
   if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Clear");
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"---------------CLEAR START------------");
   }
   
   for(int i = 0; i < MAX_NUMBER_TIDE_SWINGS; i++){
@@ -138,13 +138,20 @@ static void clear(){
       APP_LOG(APP_LOG_LEVEL_DEBUG,"Gpath_destroyed");
       tide_path = NULL;   
   }
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"---------------CLEAR DONE------------");
+  }
 }
 
 //get the date from the system
 static void getCurrentDate(){
   time_t rawtime;
   struct tm * timeinfo;
-
+  
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"-------------GET CURRENT DATE START----------");
+  }
+  
   time (&rawtime);
   timeinfo = localtime (&rawtime);
 
@@ -157,6 +164,10 @@ static void getCurrentDate(){
   month[1] = dateBuffer[6];
   day[0] = dateBuffer[8];
   day[1] = dateBuffer[9];
+  
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"-------------GET CURRENT DATE DONE----------");
+  }
 }
 
 //2015-12-14
@@ -189,7 +200,8 @@ static int compareDates(char m1,char m2,char d1,char d2){
 //part
 static void getSubString(int startingIndex){
   if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Getting Substring");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "-------------GETTING SUBSTRING START------------");
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"Getting Substring index %d",startingIndex);
   }
   
   int newStartingPoint = 0;
@@ -233,21 +245,28 @@ static void getSubString(int startingIndex){
     }
   }
   
-
   /*partial copy*/
   strncpy (tideText,&s_buffer[newStartingPoint+1],newEndingPoint-newStartingPoint);
   tideText[newEndingPoint-newStartingPoint] = '\0';   /* null character manually added */
   tideTextLength = newEndingPoint-newStartingPoint;
- }
+  
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "-------------GETTING SUBSTRING END------------");
+  } 
+}
 
 //this is performing a binary search for the date
 //this will return the s_buffer index
 //that the string was found
 static int search(){
+  
   unsigned int high = strlen(s_buffer);
   unsigned int low = 0;
   unsigned int current = (high - low)/2;
 
+  if(DEBUG){
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "-------------SEARCH START------------");
+  }
   while((high-low) >= 1){
 
       //we found a date
@@ -261,8 +280,9 @@ static int search(){
             }else if(compareDates(s_buffer[current+1],s_buffer[current+2],s_buffer[current+4],s_buffer[current+5]) == 3){
               if(DEBUG){
                 APP_LOG(APP_LOG_LEVEL_DEBUG, "we found it: %c - /%c%c/%c%c",s_buffer[current],s_buffer[current+1],s_buffer[current+2],s_buffer[current+4],s_buffer[current+5]);
+                APP_LOG(APP_LOG_LEVEL_DEBUG, "-------------SEARCH DONE------------");
               }
-                return current;
+              return current;
             //the date found is too small
             }else if(compareDates(s_buffer[current+1],s_buffer[current+2],s_buffer[current+4],s_buffer[current+5]) == 2){
               low = current;
@@ -271,7 +291,7 @@ static int search(){
             }else{
               high = current;
               current = (high + low)/2;
-            }            
+            }
       }else{
         current++;
       }
@@ -283,8 +303,8 @@ static int search(){
  of smaller strings*/
 static void divideUpSubString(){
   if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Dividing Substring");
-  }
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"-------------DIVIDING SUBSTRING START-----------");
+  }  
   int z = 0;
   for(int i = 0; i < MAX_NUMBER_TIDE_SWINGS; i++){
       for(int k = 0; k < 32; k++){
@@ -297,13 +317,13 @@ static void divideUpSubString(){
       }
   }
   if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Done Dividing Substring");
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"-------------DIVIDING SUBSTRING DONE-----------");
   }
 }
 
 static void getExtremaFromText(){
   if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Getting Min and Max");
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"----------GETTING EXTREMA START------------");
   }
   
   int i = 0;
@@ -311,33 +331,29 @@ static void getExtremaFromText(){
     //get time in px
     timeExtrema[i] = 1000*(tideTextDivided[i][15]-'0')+100*(tideTextDivided[i][16]-'0')+10*(tideTextDivided[i][18]-'0')+1*(tideTextDivided[i][19]-'0');
     
-    if(DEBUG){
-      APP_LOG(APP_LOG_LEVEL_DEBUG," 15:%c 16:%c 17:%c 18:%c 19:%c 20:%c 21:%c 22:%c 23:%c 24:%c 25:%c 26:%c 27:%c",tideTextDivided[i][15],tideTextDivided[i][16],tideTextDivided[i][17],
-            tideTextDivided[i][18],tideTextDivided[i][19],tideTextDivided[i][20],tideTextDivided[i][21],tideTextDivided[i][22],tideTextDivided[i][23],
-           tideTextDivided[i][24],tideTextDivided[i][25],tideTextDivided[i][26],tideTextDivided[i][27]);
-    }
     //convert time to military
     //take care of corner cases
     if(tideTextDivided[i][21] == 'P')
-      timeExtrema[i]+=1200;
+      timeExtrema[i] += 1200;
     if((tideTextDivided[i][21] == 'P' && tideTextDivided[i][15] == '1' && tideTextDivided[i][16] == '2' ) || (tideTextDivided[i][21] == 'A' && tideTextDivided[i][15] == '1' && tideTextDivided[i][16] == '2'))
-      timeExtrema[i]-=1200;
+      timeExtrema[i] -= 1200;
     
     timeExtrema[i] /= 100;
     
     //get tide
     //take care of negative case
     if(tideTextDivided[i][24] == '-'){
-      tideExtrema[i]=10*(tideTextDivided[i][25]-'0') + 1*(tideTextDivided[i][27]-'0');
+      tideExtrema[i] = 10*(tideTextDivided[i][25]-'0') + 1*(tideTextDivided[i][27]-'0');
+      tideExtrema[i] *= -1;
     }else{
-      tideExtrema[i]=10*(tideTextDivided[i][24]-'0') + 1*(tideTextDivided[i][26]-'0');
+      tideExtrema[i] = 10*(tideTextDivided[i][24]-'0') + 1*(tideTextDivided[i][26]-'0');
     }
     tideExtrema[i] /= 10;
     
     i++;   
   }
   if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Done Getting Min and Max");
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"----------GETTING EXTREMA DONE------------");
   }
 }
 
@@ -371,7 +387,11 @@ static void drawCurrentTimeLineAndFeetLine(GContext *ctx){
   timeinfo = localtime (&rawtime);
   strftime (buffer,80,"%R",timeinfo);
   
-  double timeInPX = 1000*(buffer[0]-'0')+100*(buffer[1]-'0')+10*(buffer[3]-'0')+1*(buffer[4]-'0');
+  if(DEBUG)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "-----------DRAW CURRENT TIME LINE START----------");
+
+  double timeInPX = 1000*(
+  buffer[0]-'0')+100*(buffer[1]-'0')+10*(buffer[3]-'0')+1*(buffer[4]-'0');
   timeInPX/=100;//move two decimal places
   timeInPX*=PX_PER_HOUR;//each hour times by PX_PER_HOUR
   timeInPX+=5;//to account for shift of line in graphics
@@ -416,18 +436,16 @@ static void drawCurrentTimeLineAndFeetLine(GContext *ctx){
   str[stringIndex] = (ZERO_LINE_GUI-intersection.y)/PX_PER_FOOT+'0';
   
   if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"******************************");
     APP_LOG(APP_LOG_LEVEL_DEBUG,"PX_PER_FOOT %d",PX_PER_FOOT);
     APP_LOG(APP_LOG_LEVEL_DEBUG,"intersection.y %d",intersection.y);
     APP_LOG(APP_LOG_LEVEL_DEBUG,"ZERO_LINE_GUI %d",ZERO_LINE_GUI);
     APP_LOG(APP_LOG_LEVEL_DEBUG,"currentTide %d",(ZERO_LINE_GUI-intersection.y)/PX_PER_FOOT);
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"******************************");
   }
   
   stringIndex++;
   str[stringIndex] = '.';
   stringIndex++;
-  if((ZERO_LINE_GUI-intersection.y)%PX_PER_FOOT > 9)
+  if((ZERO_LINE_GUI-intersection.y)%PX_PER_FOOT > 9 || (ZERO_LINE_GUI-intersection.y)%PX_PER_FOOT < -9)
     str[stringIndex] = '9';
   else
     str[stringIndex] = (ZERO_LINE_GUI-intersection.y)%PX_PER_FOOT+'0';
@@ -437,11 +455,7 @@ static void drawCurrentTimeLineAndFeetLine(GContext *ctx){
   str[stringIndex] = 't';
   stringIndex++;
   str[stringIndex] = '\0';
-  
-  if(DEBUG){
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"str %s %d",str,intersection.y);
-  }
-  
+    
   //if vertical bar is too far to the right draw tide to the left
   if(verticalTop.x > WIDTH_OF_GUI-50 || verticalTop.x > 70 ){
       drawText(ctx,str,verticalTop.x-30,verticalTop.y,30,20);
@@ -449,6 +463,9 @@ static void drawCurrentTimeLineAndFeetLine(GContext *ctx){
   }else{
       drawText(ctx,str,verticalTop.x+5,verticalTop.y,30,20);
   }
+  if(DEBUG)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "-----------DRAW CURRENT TIME LINE DONE----------");
+
 }
 
 static void drawOutlineOfGraph(GContext *ctx){
@@ -502,7 +519,10 @@ static void drawOutlineOfGraph(GContext *ctx){
 static void drawExtremaPoints(GContext *ctx){
     graphics_context_set_stroke_color(ctx,tideBackgroundColor);
     graphics_context_set_stroke_width(ctx, 2);
-    
+  
+    if(DEBUG)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "-----------DRAW EXTREMA POINTS START----------");
+  
     //calculate GPoints of extrema
     for(int i = 0; i < MAX_NUMBER_TIDE_SWINGS; i++){
       extremaPoints[i] = GPoint(TIME_STARTING_OFFSET+timeExtrema[i]*PX_PER_HOUR,ZERO_LINE_GUI-tideExtrema[i]*PX_PER_FOOT);
@@ -514,6 +534,10 @@ static void drawExtremaPoints(GContext *ctx){
         graphics_draw_line(ctx,extremaPoints[i],extremaPoints[i+1]);
       }
     }
+    
+    if(DEBUG)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "-----------DRAW EXTREMA POINTS DONE----------");
+  
 }
 
 static void fillInGraph(GContext *ctx){
@@ -546,13 +570,16 @@ static void graph_update(Layer *layer, GContext *ctx) {
  */
 static void refresh(){
     if(DEBUG)
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Refresh Called");
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "-------------REFRESH START-----------");
   
     clear();
     getCurrentDate();
     getSubString(search());//get new date data
     divideUpSubString();//split up chunk of date data
     layer_mark_dirty(graphic_layer);//this will redraw the graph layer
+    
+    if(DEBUG)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "-------------REFRESH DONE-----------");
 }
 
 static void window_unload(Window *window) {
@@ -613,7 +640,9 @@ static void init(void) {
   
   app_message_register_inbox_received(inbox_received_handler);
   app_message_open(100,100);
-  
+
+  load_resource();
+
   //update clock every minute
   tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
   
@@ -624,8 +653,6 @@ static void init(void) {
   });
   const bool animated = true;
   window_stack_push(window, animated);
-
-  load_resource();
 }
 
 static void deinit(void) {
