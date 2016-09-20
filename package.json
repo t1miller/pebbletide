@@ -9,23 +9,14 @@
             "configurable"
         ],
         "displayName": "Tide",
-        "enableMultiJS": false,
-        "messageKeys": {
-            "backgroundColor": 0,
-            "selectLocation": 1
-        },
+        "enableMultiJS": true,
+        "messageKeys": [
+            "tideData",
+            "sendPhone"
+        ],
         "projectType": "native",
         "resources": {
-            "media": [
-                {
-                    "file": "data/SanDiego2016.txt",
-                    "name": "SanDiego2016",
-                    "targetPlatforms": [
-                        "basalt"
-                    ],
-                    "type": "raw"
-                }
-            ]
+            "media": []
         },
         "sdkVersion": "3",
         "targetPlatforms": [
